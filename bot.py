@@ -1,9 +1,10 @@
 import os
-import sqlite3
 import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import psycopg
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -15,7 +16,7 @@ from telegram.ext import (
 )
 
 TOKEN = os.environ["BOT_TOKEN"]
-DB_FILE = "karizma_wakeup.db"
+DATABASE_URL = os.environ["DATABASE_URL"]
 TIMEZONE = ZoneInfo("Asia/Tehran")
 
 
@@ -23,45 +24,43 @@ TIMEZONE = ZoneInfo("Asia/Tehran")
 # Database
 # =========================================================
 
+def get_connection():
+    return psycopg.connect(DATABASE_URL)
+
+
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
+    with get_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS wakeups (
+                id BIGSERIAL PRIMARY KEY,
+                telegram_id BIGINT NOT NULL,
+                name TEXT,
+                wake_date DATE NOT NULL,
+                wake_time TIME NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS wakeups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_id INTEGER NOT NULL,
-            name TEXT,
-            wake_date TEXT NOT NULL,
-            wake_time TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def save_wakeup(telegram_id, name):
     now = datetime.now(TIMEZONE)
 
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO wakeups
+            (telegram_id, name, wake_date, wake_time, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            telegram_id,
+            name,
+            now.date(),
+            now.time(),
+            now,
+        ))
 
-    cur.execute("""
-        INSERT INTO wakeups
-        (telegram_id, name, wake_date, wake_time, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        telegram_id,
-        name,
-        now.strftime("%Y-%m-%d"),
-        now.strftime("%H:%M:%S"),
-        now.isoformat(),
-    ))
-
-    conn.commit()
-    conn.close()
+        conn.commit()
 
     return now
 
@@ -71,19 +70,15 @@ def save_wakeup(telegram_id, name):
 # =========================================================
 
 def get_personal_report(telegram_id):
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT wake_date, wake_time
-        FROM wakeups
-        WHERE telegram_id = ?
-        ORDER BY id DESC
-    """, (telegram_id,))
-
-    rows = cur.fetchall()
-
-    conn.close()
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT
+                wake_date::text,
+                wake_time::text
+            FROM wakeups
+            WHERE telegram_id = %s
+            ORDER BY id DESC
+        """, (telegram_id,)).fetchall()
 
     return rows
 
@@ -96,25 +91,21 @@ def get_weekly_report(telegram_id):
     today = datetime.now(TIMEZONE).date()
     start_date = today - timedelta(days=6)
 
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT wake_date, wake_time
-        FROM wakeups
-        WHERE telegram_id = ?
-        AND wake_date >= ?
-        AND wake_date <= ?
-        ORDER BY wake_date ASC, wake_time ASC
-    """, (
-        telegram_id,
-        start_date.strftime("%Y-%m-%d"),
-        today.strftime("%Y-%m-%d"),
-    ))
-
-    rows = cur.fetchall()
-
-    conn.close()
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT
+                wake_date::text,
+                wake_time::text
+            FROM wakeups
+            WHERE telegram_id = %s
+            AND wake_date >= %s
+            AND wake_date <= %s
+            ORDER BY wake_date ASC, wake_time ASC
+        """, (
+            telegram_id,
+            start_date,
+            today,
+        )).fetchall()
 
     return rows
 
@@ -341,6 +332,7 @@ def start_web_server():
 
 def main():
 
+    # Initialize PostgreSQL database
     init_db()
 
     # Start HTTP server for Render

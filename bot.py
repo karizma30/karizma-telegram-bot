@@ -1,7 +1,9 @@
 import os
 import sqlite3
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -104,14 +106,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ---------------------------------------------------------
+# Render Health Check Web Server
+# ---------------------------------------------------------
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Karizma Bot is running")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def start_web_server():
+    port = int(os.environ.get("PORT", 10000))
+
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    print(f"Health server started on port {port}")
+
+    server.serve_forever()
+
+
 def main():
     init_db()
 
+    # Start HTTP server for Render
+    threading.Thread(
+        target=start_web_server,
+        daemon=True
+    ).start()
+
     application = Application.builder().token(TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        CommandHandler("start", start)
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        )
     )
 
     print("Karizma30_bot started...")

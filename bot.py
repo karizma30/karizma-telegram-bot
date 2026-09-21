@@ -186,7 +186,6 @@ async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_seconds = 0
 
     for wake_date, wake_time in rows:
-
         try:
             hour, minute, second = map(
                 int,
@@ -254,7 +253,6 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_seconds = 0
 
     for wake_date, wake_time in rows:
-
         try:
             hour, minute, second = map(
                 int,
@@ -413,10 +411,16 @@ def main():
         daemon=True
     ).start()
 
+    # Telegram application
+    # Increased timeouts for Render/Telegram connection
     application = (
         Application
         .builder()
         .token(TOKEN)
+        .get_updates_connect_timeout(30)
+        .get_updates_read_timeout(30)
+        .get_updates_write_timeout(30)
+        .get_updates_pool_timeout(30)
         .build()
     )
 

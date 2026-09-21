@@ -1,8 +1,6 @@
 import os
-import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import psycopg
 
@@ -949,32 +947,12 @@ async def handle_message(
 
 
 # =========================================================
-# Render Health Server
+# Telegram Webhook
 # =========================================================
 
-class HealthHandler(BaseHTTPRequestHandler):
+def main():
 
-    def do_GET(self):
-
-        self.send_response(200)
-
-        self.send_header(
-            "Content-type",
-            "text/plain"
-        )
-
-        self.end_headers()
-
-        self.wfile.write(
-            b"Karizma Bot is running"
-        )
-
-    def log_message(self, format, *args):
-
-        pass
-
-
-def start_web_server():
+    init_db()
 
     port = int(
         os.environ.get(
@@ -983,39 +961,21 @@ def start_web_server():
         )
     )
 
-    server = HTTPServer(
-        ("0.0.0.0", port),
-        HealthHandler
+    external_url = os.environ.get(
+        "RENDER_EXTERNAL_URL",
+        "https://karizma-telegram-bot.onrender.com"
+    ).rstrip("/")
+
+    webhook_path = "telegram-webhook"
+
+    webhook_url = (
+        f"{external_url}/{webhook_path}"
     )
-
-    print(
-        f"Health server started on port {port}"
-    )
-
-    server.serve_forever()
-
-
-# =========================================================
-# Main
-# =========================================================
-
-def main():
-
-    init_db()
-
-    threading.Thread(
-        target=start_web_server,
-        daemon=True
-    ).start()
 
     application = (
         Application
         .builder()
         .token(TOKEN)
-        .get_updates_connect_timeout(30)
-        .get_updates_read_timeout(30)
-        .get_updates_write_timeout(30)
-        .get_updates_pool_timeout(30)
         .build()
     )
 
@@ -1048,10 +1008,32 @@ def main():
     )
 
     print(
-        "Karizma30_bot started..."
+        "========================================"
     )
 
-    application.run_polling()
+    print(
+        "Karizma30_bot starting..."
+    )
+
+    print(
+        f"Webhook URL: {webhook_url}"
+    )
+
+    print(
+        f"Listening on port: {port}"
+    )
+
+    print(
+        "========================================"
+    )
+
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=webhook_path,
+        webhook_url=webhook_url,
+        drop_pending_updates=True
+    )
 
 
 # =========================================================

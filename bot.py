@@ -44,10 +44,32 @@ def init_db():
         conn.commit()
 
 
+# =========================================================
+# Save Wake Up
+# فقط اولین ثبت هر شخص در هر روز حساب می‌شود
+# =========================================================
+
 def save_wakeup(telegram_id, name):
+
     now = datetime.now(TIMEZONE)
 
     with get_connection() as conn:
+
+        existing = conn.execute("""
+            SELECT wake_time
+            FROM wakeups
+            WHERE telegram_id = %s
+              AND wake_date = %s
+            ORDER BY id ASC
+            LIMIT 1
+        """, (
+            telegram_id,
+            now.date(),
+        )).fetchone()
+
+        if existing:
+            return now, False, existing[0]
+
         conn.execute("""
             INSERT INTO wakeups
             (telegram_id, name, wake_date, wake_time, created_at)
@@ -62,7 +84,7 @@ def save_wakeup(telegram_id, name):
 
         conn.commit()
 
-    return now
+    return now, True, now.time()
 
 
 # =========================================================
@@ -70,7 +92,9 @@ def save_wakeup(telegram_id, name):
 # =========================================================
 
 def get_personal_report(telegram_id):
+
     with get_connection() as conn:
+
         rows = conn.execute("""
             SELECT
                 wake_date::text,
@@ -88,18 +112,20 @@ def get_personal_report(telegram_id):
 # =========================================================
 
 def get_weekly_report(telegram_id):
+
     today = datetime.now(TIMEZONE).date()
     start_date = today - timedelta(days=6)
 
     with get_connection() as conn:
+
         rows = conn.execute("""
             SELECT
                 wake_date::text,
                 wake_time::text
             FROM wakeups
             WHERE telegram_id = %s
-            AND wake_date >= %s
-            AND wake_date <= %s
+              AND wake_date >= %s
+              AND wake_date <= %s
             ORDER BY wake_date ASC, wake_time ASC
         """, (
             telegram_id,
@@ -111,6 +137,43 @@ def get_weekly_report(telegram_id):
 
 
 # =========================================================
+# Today's Ranking
+# =========================================================
+
+def get_today_ranking():
+
+    today = datetime.now(TIMEZONE).date()
+
+    with get_connection() as conn:
+
+        rows = conn.execute("""
+            SELECT DISTINCT ON (telegram_id)
+                telegram_id,
+                name,
+                wake_time
+            FROM wakeups
+            WHERE wake_date = %s
+            ORDER BY telegram_id, wake_time ASC, id ASC
+        """, (today,)).fetchall()
+
+    rows.sort(key=lambda row: row[2])
+
+    return rows
+
+
+def get_today_user_rank(telegram_id):
+
+    ranking = get_today_ranking()
+
+    for index, row in enumerate(ranking, start=1):
+
+        if row[0] == telegram_id:
+            return index, len(ranking), row[2]
+
+    return None
+
+
+# =========================================================
 # /start
 # =========================================================
 
@@ -118,6 +181,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         ["🌅 بیدار شدم"],
+        ["🏆 رتبه‌بندی امروز"],
         ["📊 گزارش من", "📅 گزارش هفتگی"],
     ]
 
@@ -129,7 +193,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_chat.send_message(
         text=(
             "🌟 به ربات کاریزما خوش آمدی!\n\n"
-            "برای ثبت ساعت بیدار شدنت روی دکمه زیر بزن:"
+            "هر روز صبح ساعت بیدار شدنت را ثبت کن "
+            "و برای کسب رتبه بهتر تلاش کن! 🏆"
         ),
         reply_markup=reply_markup
     )
@@ -143,10 +208,68 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
 
-    now = save_wakeup(
+    now, is_new, saved_time = save_wakeup(
         user.id,
         user.full_name
     )
+
+    if not is_new:
+
+        rank_info = get_today_user_rank(user.id)
+
+        if rank_info:
+
+            rank, total, original_time = rank_info
+
+            await update.effective_chat.send_message(
+                text=(
+                    f"🌅 ساعت بیداری امروزت قبلاً ثبت شده است.\n\n"
+                    f"⏰ اولین ثبت: {original_time}\n"
+                    f"🏆 رتبه امروز: {rank} از {total}\n\n"
+                    f"ثبت دوباره رتبه‌ات را تغییر نمی‌دهد. 💪"
+                )
+            )
+
+        else:
+
+            await update.effective_chat.send_message(
+                text=(
+                    "🌅 ساعت بیداری امروزت قبلاً ثبت شده است."
+                )
+            )
+
+        return
+
+    rank_info = get_today_user_rank(user.id)
+
+    if rank_info:
+
+        rank, total, saved_time = rank_info
+
+    else:
+
+        rank = 1
+        total = 1
+
+    if rank == 1:
+
+        medal = "🥇"
+        message = "تو اولین نفر امروز بودی! 🔥"
+
+    elif rank == 2:
+
+        medal = "🥈"
+        message = "عالیه! فقط یک نفر زودتر از تو بیدار شده. 💪"
+
+    elif rank == 3:
+
+        medal = "🥉"
+        message = "آفرین! جزو سه نفر اول امروز هستی. 🔥"
+
+    else:
+
+        medal = "🏅"
+        message = "آفرین که روزت رو شروع کردی! ادامه بده. 💪"
 
     await update.effective_chat.send_message(
         text=(
@@ -154,7 +277,76 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {user.full_name}\n"
             f"🌅 ساعت: {now.strftime('%H:%M:%S')}\n"
             f"📅 تاریخ: {now.strftime('%Y-%m-%d')}\n\n"
-            f"آفرین! روزت رو قدرتمند شروع کن 💪"
+            f"{medal} رتبه امروز: {rank}\n"
+            f"👥 تعداد ثبت‌شده‌ها: {total}\n\n"
+            f"{message}"
+        )
+    )
+
+
+# =========================================================
+# Today's Ranking Message
+# =========================================================
+
+async def today_ranking(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    ranking = get_today_ranking()
+
+    today = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+
+    if not ranking:
+
+        await update.effective_chat.send_message(
+            text=(
+                f"🏆 رتبه‌بندی امروز\n\n"
+                f"📅 {today}\n\n"
+                f"هنوز کسی ساعت بیداری خود را ثبت نکرده است.\n\n"
+                f"اولین نفر باش! 🔥"
+            )
+        )
+
+        return
+
+    lines = []
+
+    for index, row in enumerate(ranking, start=1):
+
+        telegram_id, name, wake_time = row
+
+        if index == 1:
+
+            medal = "🥇"
+
+        elif index == 2:
+
+            medal = "🥈"
+
+        elif index == 3:
+
+            medal = "🥉"
+
+        else:
+
+            medal = "🏅"
+
+        clean_name = name or "دانش‌آموز"
+
+        lines.append(
+            f"{medal} {index}. {clean_name} — {wake_time}"
+        )
+
+    ranking_text = "\n".join(lines)
+
+    await update.effective_chat.send_message(
+        text=(
+            f"🏆 رتبه‌بندی بیداری امروز\n\n"
+            f"📅 {today}\n\n"
+            f"{ranking_text}\n\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"🌅 فردا دوباره از رتبه ۱ شروع می‌کنیم!"
         )
     )
 
@@ -163,34 +355,43 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Personal Report
 # =========================================================
 
-async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def personal_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     user = update.effective_user
 
     rows = get_personal_report(user.id)
 
     if not rows:
+
         await update.effective_chat.send_message(
             text=(
                 "📊 هنوز هیچ ساعت بیداری برای شما ثبت نشده است.\n\n"
                 "ابتدا روی دکمه 🌅 بیدار شدم بزن."
             )
         )
+
         return
 
     total = len(rows)
 
     latest_date, latest_time = rows[0]
 
-    # Calculate average wake-up time
     total_seconds = 0
 
+    valid_count = 0
+
     for wake_date, wake_time in rows:
+
         try:
-            hour, minute, second = map(
-                int,
-                wake_time.split(":")
-            )
+
+            parts = wake_time.split(":")
+
+            hour = int(parts[0])
+            minute = int(parts[1])
+            second = int(float(parts[2]))
 
             total_seconds += (
                 hour * 3600
@@ -198,16 +399,47 @@ async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 + second
             )
 
-        except ValueError:
+            valid_count += 1
+
+        except (ValueError, IndexError):
+
             pass
 
-    average_seconds = total_seconds // total
+    if valid_count > 0:
 
-    avg_hour = average_seconds // 3600
+        average_seconds = (
+            total_seconds // valid_count
+        )
 
-    avg_minute = (
-        average_seconds % 3600
-    ) // 60
+        avg_hour = average_seconds // 3600
+
+        avg_minute = (
+            average_seconds % 3600
+        ) // 60
+
+        average_text = (
+            f"{avg_hour:02d}:{avg_minute:02d}"
+        )
+
+    else:
+
+        average_text = "نامشخص"
+
+    rank_info = get_today_user_rank(user.id)
+
+    if rank_info:
+
+        rank, today_total, today_time = rank_info
+
+        today_rank_text = (
+            f"🏆 رتبه امروز: {rank} از {today_total}"
+        )
+
+    else:
+
+        today_rank_text = (
+            "🏆 امروز هنوز ثبت بیداری نداری"
+        )
 
     await update.effective_chat.send_message(
         text=(
@@ -217,7 +449,8 @@ async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🌅 آخرین بیداری: {latest_time}\n"
             f"📅 تاریخ آخرین ثبت: {latest_date}\n"
             f"⏰ میانگین ساعت بیداری: "
-            f"{avg_hour:02d}:{avg_minute:02d}\n\n"
+            f"{average_text}\n\n"
+            f"{today_rank_text}\n\n"
             f"💪 ادامه بده؛ نظم روزانه یعنی پیشرفت!"
         )
     )
@@ -227,19 +460,24 @@ async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Weekly Report
 # =========================================================
 
-async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def weekly_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     user = update.effective_user
 
     rows = get_weekly_report(user.id)
 
     if not rows:
+
         await update.effective_chat.send_message(
             text=(
                 "📅 در ۷ روز گذشته هیچ ثبت بیداری‌ای ندارید.\n\n"
                 "از فردا شروع کن و هر روز ساعت بیدار شدنت را ثبت کن 🌅"
             )
         )
+
         return
 
     today = datetime.now(TIMEZONE).date()
@@ -252,12 +490,17 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_seconds = 0
 
+    valid_count = 0
+
     for wake_date, wake_time in rows:
+
         try:
-            hour, minute, second = map(
-                int,
-                wake_time.split(":")
-            )
+
+            parts = wake_time.split(":")
+
+            hour = int(parts[0])
+            minute = int(parts[1])
+            second = int(float(parts[2]))
 
             total_seconds += (
                 hour * 3600
@@ -265,18 +508,31 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 + second
             )
 
-        except ValueError:
+            valid_count += 1
+
+        except (ValueError, IndexError):
+
             pass
 
-    average_seconds = (
-        total_seconds // len(rows)
-    )
+    if valid_count > 0:
 
-    avg_hour = average_seconds // 3600
+        average_seconds = (
+            total_seconds // valid_count
+        )
 
-    avg_minute = (
-        average_seconds % 3600
-    ) // 60
+        avg_hour = average_seconds // 3600
+
+        avg_minute = (
+            average_seconds % 3600
+        ) // 60
+
+        average_text = (
+            f"{avg_hour:02d}:{avg_minute:02d}"
+        )
+
+    else:
+
+        average_text = "نامشخص"
 
     report_lines = []
 
@@ -299,7 +555,7 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📆 تعداد روزهای ثبت‌شده: "
             f"{days_registered} از ۷ روز\n"
             f"⏰ میانگین ساعت بیداری: "
-            f"{avg_hour:02d}:{avg_minute:02d}\n\n"
+            f"{average_text}\n\n"
             f"━━━━━━━━━━━━━━\n"
             f"{report_text}\n"
             f"━━━━━━━━━━━━━━\n\n"
@@ -318,6 +574,7 @@ async def handle_message(
 ):
 
     if not update.message or not update.message.text:
+
         return
 
     text = update.message.text
@@ -325,6 +582,13 @@ async def handle_message(
     if text == "🌅 بیدار شدم":
 
         await wakeup(
+            update,
+            context
+        )
+
+    elif text == "🏆 رتبه‌بندی امروز":
+
+        await today_ranking(
             update,
             context
         )
@@ -372,6 +636,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         )
 
     def log_message(self, format, *args):
+
         pass
 
 
@@ -402,17 +667,13 @@ def start_web_server():
 
 def main():
 
-    # Initialize PostgreSQL database
     init_db()
 
-    # Start HTTP server for Render
     threading.Thread(
         target=start_web_server,
         daemon=True
     ).start()
 
-    # Telegram application
-    # Increased timeouts for Render/Telegram connection
     application = (
         Application
         .builder()
@@ -464,4 +725,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()

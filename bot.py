@@ -30,6 +30,7 @@ def get_connection():
 
 def init_db():
     with get_connection() as conn:
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS wakeups (
                 id BIGSERIAL PRIMARY KEY,
@@ -41,12 +42,22 @@ def init_db():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS study_reports (
+                id BIGSERIAL PRIMARY KEY,
+                telegram_id BIGINT NOT NULL,
+                name TEXT,
+                study_date DATE NOT NULL,
+                minutes INTEGER NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+
         conn.commit()
 
 
 # =========================================================
-# Save Wake Up
-# فقط اولین ثبت هر شخص در هر روز حساب می‌شود
+# Wake Up
 # =========================================================
 
 def save_wakeup(telegram_id, name):
@@ -88,56 +99,7 @@ def save_wakeup(telegram_id, name):
 
 
 # =========================================================
-# Personal Report
-# =========================================================
-
-def get_personal_report(telegram_id):
-
-    with get_connection() as conn:
-
-        rows = conn.execute("""
-            SELECT
-                wake_date::text,
-                wake_time::text
-            FROM wakeups
-            WHERE telegram_id = %s
-            ORDER BY id DESC
-        """, (telegram_id,)).fetchall()
-
-    return rows
-
-
-# =========================================================
-# Weekly Report
-# =========================================================
-
-def get_weekly_report(telegram_id):
-
-    today = datetime.now(TIMEZONE).date()
-    start_date = today - timedelta(days=6)
-
-    with get_connection() as conn:
-
-        rows = conn.execute("""
-            SELECT
-                wake_date::text,
-                wake_time::text
-            FROM wakeups
-            WHERE telegram_id = %s
-              AND wake_date >= %s
-              AND wake_date <= %s
-            ORDER BY wake_date ASC, wake_time ASC
-        """, (
-            telegram_id,
-            start_date,
-            today,
-        )).fetchall()
-
-    return rows
-
-
-# =========================================================
-# Today's Ranking
+# Wake Up Ranking
 # =========================================================
 
 def get_today_ranking():
@@ -174,14 +136,224 @@ def get_today_user_rank(telegram_id):
 
 
 # =========================================================
-# /start
+# Personal Wake Report
+# =========================================================
+
+def get_personal_report(telegram_id):
+
+    with get_connection() as conn:
+
+        rows = conn.execute("""
+            SELECT
+                wake_date::text,
+                wake_time::text
+            FROM wakeups
+            WHERE telegram_id = %s
+            ORDER BY id DESC
+        """, (telegram_id,)).fetchall()
+
+    return rows
+
+
+# =========================================================
+# Weekly Wake Report
+# =========================================================
+
+def get_weekly_report(telegram_id):
+
+    today = datetime.now(TIMEZONE).date()
+    start_date = today - timedelta(days=6)
+
+    with get_connection() as conn:
+
+        rows = conn.execute("""
+            SELECT
+                wake_date::text,
+                wake_time::text
+            FROM wakeups
+            WHERE telegram_id = %s
+              AND wake_date >= %s
+              AND wake_date <= %s
+            ORDER BY wake_date ASC, wake_time ASC
+        """, (
+            telegram_id,
+            start_date,
+            today,
+        )).fetchall()
+
+    return rows
+
+
+# =========================================================
+# Study Report
+# =========================================================
+
+def save_study_report(telegram_id, name, minutes):
+
+    now = datetime.now(TIMEZONE)
+
+    with get_connection() as conn:
+
+        conn.execute("""
+            INSERT INTO study_reports
+            (telegram_id, name, study_date, minutes, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            telegram_id,
+            name,
+            now.date(),
+            minutes,
+            now,
+        ))
+
+        conn.commit()
+
+    return now
+
+
+# =========================================================
+# Today's Study Ranking
+# =========================================================
+
+def get_today_study_ranking():
+
+    today = datetime.now(TIMEZONE).date()
+
+    with get_connection() as conn:
+
+        rows = conn.execute("""
+            SELECT
+                telegram_id,
+                MAX(name) AS name,
+                SUM(minutes) AS total_minutes
+            FROM study_reports
+            WHERE study_date = %s
+            GROUP BY telegram_id
+            ORDER BY total_minutes DESC
+        """, (today,)).fetchall()
+
+    return rows
+
+
+def get_today_study_user(telegram_id):
+
+    ranking = get_today_study_ranking()
+
+    for index, row in enumerate(ranking, start=1):
+
+        if row[0] == telegram_id:
+
+            return (
+                index,
+                len(ranking),
+                row[2]
+            )
+
+    return None
+
+
+def get_personal_today_study(telegram_id):
+
+    today = datetime.now(TIMEZONE).date()
+
+    with get_connection() as conn:
+
+        result = conn.execute("""
+            SELECT COALESCE(SUM(minutes), 0)
+            FROM study_reports
+            WHERE telegram_id = %s
+              AND study_date = %s
+        """, (
+            telegram_id,
+            today,
+        )).fetchone()
+
+    return result[0] if result else 0
+
+
+# =========================================================
+# Format Minutes
+# =========================================================
+
+def format_minutes(minutes):
+
+    hours = minutes // 60
+    mins = minutes % 60
+
+    if hours > 0 and mins > 0:
+
+        return f"{hours} ساعت و {mins} دقیقه"
+
+    if hours > 0:
+
+        return f"{hours} ساعت"
+
+    return f"{mins} دقیقه"
+
+
+# =========================================================
+# Parse Study Time
+# =========================================================
+
+def parse_study_time(text):
+
+    text = text.strip()
+
+    # Format: 2:30
+    if ":" in text:
+
+        parts = text.split(":")
+
+        if len(parts) != 2:
+            return None
+
+        try:
+
+            hours = int(parts[0])
+            minutes = int(parts[1])
+
+        except ValueError:
+
+            return None
+
+        if hours < 0 or minutes < 0 or minutes >= 60:
+            return None
+
+        total = hours * 60 + minutes
+
+        if total <= 0:
+            return None
+
+        return total
+
+    # Format: 150
+    try:
+
+        minutes = int(text)
+
+        if minutes <= 0:
+            return None
+
+        return minutes
+
+    except ValueError:
+
+        return None
+
+
+# =========================================================
+# Start
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    context.user_data["waiting_study"] = False
+
     keyboard = [
         ["🌅 بیدار شدم"],
         ["🏆 رتبه‌بندی امروز"],
+        ["📚 ثبت گزارش کار"],
+        ["🏆 رتبه‌بندی مطالعه"],
         ["📊 گزارش من", "📅 گزارش هفتگی"],
     ]
 
@@ -193,8 +365,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_chat.send_message(
         text=(
             "🌟 به ربات کاریزما خوش آمدی!\n\n"
-            "هر روز صبح ساعت بیدار شدنت را ثبت کن "
-            "و برای کسب رتبه بهتر تلاش کن! 🏆"
+            "🌅 ساعت بیداری خودت را ثبت کن.\n"
+            "📚 میزان مطالعه‌ات را ثبت کن.\n"
+            "🏆 رتبه خودت را با دیگر دانش‌آموزان ببین."
         ),
         reply_markup=reply_markup
     )
@@ -230,14 +403,6 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             )
 
-        else:
-
-            await update.effective_chat.send_message(
-                text=(
-                    "🌅 ساعت بیداری امروزت قبلاً ثبت شده است."
-                )
-            )
-
         return
 
     rank_info = get_today_user_rank(user.id)
@@ -269,7 +434,7 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
 
         medal = "🏅"
-        message = "آفرین که روزت رو شروع کردی! ادامه بده. 💪"
+        message = "آفرین که روزت رو شروع کردی! 💪"
 
     await update.effective_chat.send_message(
         text=(
@@ -285,7 +450,7 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# Today's Ranking Message
+# Wake Ranking
 # =========================================================
 
 async def today_ranking(
@@ -301,7 +466,7 @@ async def today_ranking(
 
         await update.effective_chat.send_message(
             text=(
-                f"🏆 رتبه‌بندی امروز\n\n"
+                f"🏆 رتبه‌بندی بیداری امروز\n\n"
                 f"📅 {today}\n\n"
                 f"هنوز کسی ساعت بیداری خود را ثبت نکرده است.\n\n"
                 f"اولین نفر باش! 🔥"
@@ -317,19 +482,12 @@ async def today_ranking(
         telegram_id, name, wake_time = row
 
         if index == 1:
-
             medal = "🥇"
-
         elif index == 2:
-
             medal = "🥈"
-
         elif index == 3:
-
             medal = "🥉"
-
         else:
-
             medal = "🏅"
 
         clean_name = name or "دانش‌آموز"
@@ -338,13 +496,11 @@ async def today_ranking(
             f"{medal} {index}. {clean_name} — {wake_time}"
         )
 
-    ranking_text = "\n".join(lines)
-
     await update.effective_chat.send_message(
         text=(
             f"🏆 رتبه‌بندی بیداری امروز\n\n"
             f"📅 {today}\n\n"
-            f"{ranking_text}\n\n"
+            f"{chr(10).join(lines)}\n\n"
             f"━━━━━━━━━━━━━━\n"
             f"🌅 فردا دوباره از رتبه ۱ شروع می‌کنیم!"
         )
@@ -352,7 +508,213 @@ async def today_ranking(
 
 
 # =========================================================
-# Personal Report
+# Register Study Report
+# =========================================================
+
+async def start_study_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    context.user_data["waiting_study"] = True
+
+    await update.effective_chat.send_message(
+        text=(
+            "📚 ثبت گزارش کار\n\n"
+            "مدت مطالعه امروزت را وارد کن.\n\n"
+            "مثال:\n"
+            "⏱ 2:30 یعنی ۲ ساعت و ۳۰ دقیقه\n"
+            "⏱ 1:45 یعنی ۱ ساعت و ۴۵ دقیقه\n"
+            "⏱ 60 یعنی ۶۰ دقیقه\n\n"
+            "برای لغو بنویس: لغو"
+        )
+    )
+
+
+# =========================================================
+# Save Study Message
+# =========================================================
+
+async def process_study_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    text = update.message.text.strip()
+
+    if text == "لغو":
+
+        context.user_data["waiting_study"] = False
+
+        await update.effective_chat.send_message(
+            text="❌ ثبت گزارش کار لغو شد."
+        )
+
+        return
+
+    minutes = parse_study_time(text)
+
+    if minutes is None:
+
+        await update.effective_chat.send_message(
+            text=(
+                "❌ فرمت واردشده درست نیست.\n\n"
+                "مثلاً بنویس:\n"
+                "2:30\n\n"
+                "یعنی ۲ ساعت و ۳۰ دقیقه."
+            )
+        )
+
+        return
+
+    user = update.effective_user
+
+    now = save_study_report(
+        user.id,
+        user.full_name,
+        minutes
+    )
+
+    context.user_data["waiting_study"] = False
+
+    total_today = get_personal_today_study(
+        user.id
+    )
+
+    rank_info = get_today_study_user(
+        user.id
+    )
+
+    if rank_info:
+
+        rank, total_users, ranking_minutes = rank_info
+
+    else:
+
+        rank = 1
+        total_users = 1
+
+    await update.effective_chat.send_message(
+        text=(
+            f"✅ گزارش مطالعه ثبت شد!\n\n"
+            f"📚 این نوبت: {format_minutes(minutes)}\n"
+            f"⏰ زمان ثبت: {now.strftime('%H:%M')}\n\n"
+            f"📖 مجموع مطالعه امروزت:\n"
+            f"**{format_minutes(total_today)}**\n\n"
+            f"🏆 رتبه امروز: {rank} از {total_users}\n\n"
+            f"💪 ادامه بده؛ می‌تونی رتبه‌ات رو بهتر کنی!"
+        ),
+        parse_mode="Markdown"
+    )
+
+
+# =========================================================
+# Study Ranking
+# =========================================================
+
+async def study_ranking(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    ranking = get_today_study_ranking()
+
+    today = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+
+    if not ranking:
+
+        await update.effective_chat.send_message(
+            text=(
+                f"🏆 رتبه‌بندی مطالعه امروز\n\n"
+                f"📅 {today}\n\n"
+                f"هنوز هیچ گزارشی ثبت نشده است.\n\n"
+                f"اولین گزارش را تو ثبت کن! 🔥"
+            )
+        )
+
+        return
+
+    lines = []
+
+    for index, row in enumerate(ranking, start=1):
+
+        telegram_id, name, total_minutes = row
+
+        if index == 1:
+            medal = "🥇"
+        elif index == 2:
+            medal = "🥈"
+        elif index == 3:
+            medal = "🥉"
+        else:
+            medal = "🏅"
+
+        clean_name = name or "دانش‌آموز"
+
+        lines.append(
+            f"{medal} {index}. {clean_name} — "
+            f"{format_minutes(total_minutes)}"
+        )
+
+    await update.effective_chat.send_message(
+        text=(
+            f"🏆 رتبه‌بندی مطالعه امروز\n\n"
+            f"📅 {today}\n\n"
+            f"{chr(10).join(lines)}\n\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"📚 رتبه‌ها بر اساس مجموع مطالعه امروز هستند.\n"
+            f"🌅 فردا رتبه‌بندی از صفر شروع می‌شود."
+        )
+    )
+
+
+# =========================================================
+# Personal Study Report
+# =========================================================
+
+async def personal_study_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user = update.effective_user
+
+    total_today = get_personal_today_study(
+        user.id
+    )
+
+    rank_info = get_today_study_user(
+        user.id
+    )
+
+    if not rank_info:
+
+        await update.effective_chat.send_message(
+            text=(
+                "📚 گزارش کار امروزت\n\n"
+                "هنوز گزارشی ثبت نکرده‌ای.\n\n"
+                "روی 📚 ثبت گزارش کار بزن."
+            )
+        )
+
+        return
+
+    rank, total_users, total_minutes = rank_info
+
+    await update.effective_chat.send_message(
+        text=(
+            f"📚 گزارش کار امروز\n\n"
+            f"👤 {user.full_name}\n\n"
+            f"⏱ مجموع مطالعه:\n"
+            f"{format_minutes(total_today)}\n\n"
+            f"🏆 رتبه امروز: {rank} از {total_users}\n\n"
+            f"🔥 برای افزایش رتبه، مطالعه بیشتری ثبت کن!"
+        )
+    )
+
+
+# =========================================================
+# Personal Wake Report
 # =========================================================
 
 async def personal_report(
@@ -380,7 +742,6 @@ async def personal_report(
     latest_date, latest_time = rows[0]
 
     total_seconds = 0
-
     valid_count = 0
 
     for wake_date, wake_time in rows:
@@ -405,11 +766,9 @@ async def personal_report(
 
             pass
 
-    if valid_count > 0:
+    if valid_count:
 
-        average_seconds = (
-            total_seconds // valid_count
-        )
+        average_seconds = total_seconds // valid_count
 
         avg_hour = average_seconds // 3600
 
@@ -432,7 +791,8 @@ async def personal_report(
         rank, today_total, today_time = rank_info
 
         today_rank_text = (
-            f"🏆 رتبه امروز: {rank} از {today_total}"
+            f"🏆 رتبه بیداری امروز: "
+            f"{rank} از {today_total}"
         )
 
     else:
@@ -441,17 +801,38 @@ async def personal_report(
             "🏆 امروز هنوز ثبت بیداری نداری"
         )
 
+    study_rank = get_today_study_user(
+        user.id
+    )
+
+    if study_rank:
+
+        study_rank_number, study_total_users, study_minutes = study_rank
+
+        study_rank_text = (
+            f"📚 رتبه مطالعه امروز: "
+            f"{study_rank_number} از {study_total_users}\n"
+            f"⏱ مطالعه امروز: "
+            f"{format_minutes(study_minutes)}"
+        )
+
+    else:
+
+        study_rank_text = (
+            "📚 امروز هنوز گزارش مطالعه ثبت نکرده‌ای"
+        )
+
     await update.effective_chat.send_message(
         text=(
-            f"📊 گزارش بیداری شما\n\n"
-            f"👤 {user.full_name}\n"
-            f"🔢 تعداد ثبت‌ها: {total}\n"
+            f"📊 گزارش کلی شما\n\n"
+            f"👤 {user.full_name}\n\n"
+            f"🌅 تعداد ثبت بیداری: {total}\n"
             f"🌅 آخرین بیداری: {latest_time}\n"
-            f"📅 تاریخ آخرین ثبت: {latest_date}\n"
-            f"⏰ میانگین ساعت بیداری: "
-            f"{average_text}\n\n"
-            f"{today_rank_text}\n\n"
-            f"💪 ادامه بده؛ نظم روزانه یعنی پیشرفت!"
+            f"📅 آخرین تاریخ: {latest_date}\n"
+            f"⏰ میانگین بیداری: {average_text}\n\n"
+            f"{today_rank_text}\n"
+            f"{study_rank_text}\n\n"
+            f"💪 ادامه بده!"
         )
     )
 
@@ -488,52 +869,6 @@ async def weekly_report(
         set(row[0] for row in rows)
     )
 
-    total_seconds = 0
-
-    valid_count = 0
-
-    for wake_date, wake_time in rows:
-
-        try:
-
-            parts = wake_time.split(":")
-
-            hour = int(parts[0])
-            minute = int(parts[1])
-            second = int(float(parts[2]))
-
-            total_seconds += (
-                hour * 3600
-                + minute * 60
-                + second
-            )
-
-            valid_count += 1
-
-        except (ValueError, IndexError):
-
-            pass
-
-    if valid_count > 0:
-
-        average_seconds = (
-            total_seconds // valid_count
-        )
-
-        avg_hour = average_seconds // 3600
-
-        avg_minute = (
-            average_seconds % 3600
-        ) // 60
-
-        average_text = (
-            f"{avg_hour:02d}:{avg_minute:02d}"
-        )
-
-    else:
-
-        average_text = "نامشخص"
-
     report_lines = []
 
     for wake_date, wake_time in rows:
@@ -542,10 +877,6 @@ async def weekly_report(
             f"🌅 {wake_date} → {wake_time}"
         )
 
-    report_text = "\n".join(
-        report_lines
-    )
-
     await update.effective_chat.send_message(
         text=(
             f"📅 گزارش هفتگی بیداری\n\n"
@@ -553,11 +884,9 @@ async def weekly_report(
             f"تا {today.strftime('%Y-%m-%d')}\n\n"
             f"📈 تعداد ثبت‌ها: {len(rows)}\n"
             f"📆 تعداد روزهای ثبت‌شده: "
-            f"{days_registered} از ۷ روز\n"
-            f"⏰ میانگین ساعت بیداری: "
-            f"{average_text}\n\n"
+            f"{days_registered} از ۷ روز\n\n"
             f"━━━━━━━━━━━━━━\n"
-            f"{report_text}\n"
+            f"{chr(10).join(report_lines)}\n"
             f"━━━━━━━━━━━━━━\n\n"
             f"🎯 هدف کاریزما: نظم بیشتر، پیشرفت بیشتر!"
         )
@@ -574,38 +903,43 @@ async def handle_message(
 ):
 
     if not update.message or not update.message.text:
-
         return
 
     text = update.message.text
 
-    if text == "🌅 بیدار شدم":
+    # اگر کاربر در حال ثبت گزارش مطالعه است
+    if context.user_data.get("waiting_study"):
 
-        await wakeup(
+        await process_study_report(
             update,
             context
         )
+
+        return
+
+    if text == "🌅 بیدار شدم":
+
+        await wakeup(update, context)
 
     elif text == "🏆 رتبه‌بندی امروز":
 
-        await today_ranking(
-            update,
-            context
-        )
+        await today_ranking(update, context)
+
+    elif text == "📚 ثبت گزارش کار":
+
+        await start_study_report(update, context)
+
+    elif text == "🏆 رتبه‌بندی مطالعه":
+
+        await study_ranking(update, context)
 
     elif text == "📊 گزارش من":
 
-        await personal_report(
-            update,
-            context
-        )
+        await personal_report(update, context)
 
     elif text == "📅 گزارش هفتگی":
 
-        await weekly_report(
-            update,
-            context
-        )
+        await weekly_report(update, context)
 
     else:
 

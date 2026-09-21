@@ -111,10 +111,11 @@ def get_weekly_report(telegram_id):
 
 
 # =========================================================
-# Telegram /start
+# /start
 # =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     keyboard = [
         ["🌅 بیدار شدم"],
         ["📊 گزارش من", "📅 گزارش هفتگی"],
@@ -125,9 +126,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resize_keyboard=True
     )
 
-    await update.message.reply_text(
-        "🌟 به ربات کاریزما خوش آمدی!\n\n"
-        "برای ثبت ساعت بیدار شدنت روی دکمه زیر بزن:",
+    await update.effective_chat.send_message(
+        text=(
+            "🌟 به ربات کاریزما خوش آمدی!\n\n"
+            "برای ثبت ساعت بیدار شدنت روی دکمه زیر بزن:"
+        ),
         reply_markup=reply_markup
     )
 
@@ -137,6 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 
 async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
 
     now = save_wakeup(
@@ -144,28 +148,33 @@ async def wakeup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user.full_name
     )
 
-    await update.message.reply_text(
-        f"✅ ساعت بیداری ثبت شد!\n\n"
-        f"👤 {user.full_name}\n"
-        f"🌅 ساعت: {now.strftime('%H:%M:%S')}\n"
-        f"📅 تاریخ: {now.strftime('%Y-%m-%d')}\n\n"
-        f"آفرین! روزت رو قدرتمند شروع کن 💪"
+    await update.effective_chat.send_message(
+        text=(
+            f"✅ ساعت بیداری ثبت شد!\n\n"
+            f"👤 {user.full_name}\n"
+            f"🌅 ساعت: {now.strftime('%H:%M:%S')}\n"
+            f"📅 تاریخ: {now.strftime('%Y-%m-%d')}\n\n"
+            f"آفرین! روزت رو قدرتمند شروع کن 💪"
+        )
     )
 
 
 # =========================================================
-# Personal Report Handler
+# Personal Report
 # =========================================================
 
 async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
 
     rows = get_personal_report(user.id)
 
     if not rows:
-        await update.message.reply_text(
-            "📊 هنوز هیچ ساعت بیداری برای شما ثبت نشده است.\n\n"
-            "ابتدا روی دکمه 🌅 بیدار شدم بزن."
+        await update.effective_chat.send_message(
+            text=(
+                "📊 هنوز هیچ ساعت بیداری برای شما ثبت نشده است.\n\n"
+                "ابتدا روی دکمه 🌅 بیدار شدم بزن."
+            )
         )
         return
 
@@ -177,83 +186,127 @@ async def personal_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_seconds = 0
 
     for wake_date, wake_time in rows:
+
         try:
-            hour, minute, second = map(int, wake_time.split(":"))
-            total_seconds += hour * 3600 + minute * 60 + second
+            hour, minute, second = map(
+                int,
+                wake_time.split(":")
+            )
+
+            total_seconds += (
+                hour * 3600
+                + minute * 60
+                + second
+            )
+
         except ValueError:
             pass
 
     average_seconds = total_seconds // total
 
     avg_hour = average_seconds // 3600
-    avg_minute = (average_seconds % 3600) // 60
 
-    await update.message.reply_text(
-        f"📊 گزارش بیداری شما\n\n"
-        f"👤 {user.full_name}\n"
-        f"🔢 تعداد ثبت‌ها: {total}\n"
-        f"🌅 آخرین بیداری: {latest_time}\n"
-        f"📅 تاریخ آخرین ثبت: {latest_date}\n"
-        f"⏰ میانگین ساعت بیداری: {avg_hour:02d}:{avg_minute:02d}\n\n"
-        f"💪 ادامه بده؛ نظم روزانه یعنی پیشرفت!"
+    avg_minute = (
+        average_seconds % 3600
+    ) // 60
+
+    await update.effective_chat.send_message(
+        text=(
+            f"📊 گزارش بیداری شما\n\n"
+            f"👤 {user.full_name}\n"
+            f"🔢 تعداد ثبت‌ها: {total}\n"
+            f"🌅 آخرین بیداری: {latest_time}\n"
+            f"📅 تاریخ آخرین ثبت: {latest_date}\n"
+            f"⏰ میانگین ساعت بیداری: "
+            f"{avg_hour:02d}:{avg_minute:02d}\n\n"
+            f"💪 ادامه بده؛ نظم روزانه یعنی پیشرفت!"
+        )
     )
 
 
 # =========================================================
-# Weekly Report Handler
+# Weekly Report
 # =========================================================
 
 async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
 
     rows = get_weekly_report(user.id)
 
     if not rows:
-        await update.message.reply_text(
-            "📅 در ۷ روز گذشته هیچ ثبت بیداری‌ای ندارید.\n\n"
-            "از فردا شروع کن و هر روز ساعت بیدار شدنت را ثبت کن 🌅"
+        await update.effective_chat.send_message(
+            text=(
+                "📅 در ۷ روز گذشته هیچ ثبت بیداری‌ای ندارید.\n\n"
+                "از فردا شروع کن و هر روز ساعت بیدار شدنت را ثبت کن 🌅"
+            )
         )
         return
 
     today = datetime.now(TIMEZONE).date()
+
     start_date = today - timedelta(days=6)
 
-    days_registered = len(set(row[0] for row in rows))
+    days_registered = len(
+        set(row[0] for row in rows)
+    )
 
     total_seconds = 0
 
     for wake_date, wake_time in rows:
+
         try:
-            hour, minute, second = map(int, wake_time.split(":"))
-            total_seconds += hour * 3600 + minute * 60 + second
+            hour, minute, second = map(
+                int,
+                wake_time.split(":")
+            )
+
+            total_seconds += (
+                hour * 3600
+                + minute * 60
+                + second
+            )
+
         except ValueError:
             pass
 
-    average_seconds = total_seconds // len(rows)
+    average_seconds = (
+        total_seconds // len(rows)
+    )
 
     avg_hour = average_seconds // 3600
-    avg_minute = (average_seconds % 3600) // 60
+
+    avg_minute = (
+        average_seconds % 3600
+    ) // 60
 
     report_lines = []
 
     for wake_date, wake_time in rows:
+
         report_lines.append(
             f"🌅 {wake_date} → {wake_time}"
         )
 
-    report_text = "\n".join(report_lines)
+    report_text = "\n".join(
+        report_lines
+    )
 
-    await update.message.reply_text(
-        f"📅 گزارش هفتگی بیداری\n\n"
-        f"از {start_date.strftime('%Y-%m-%d')} "
-        f"تا {today.strftime('%Y-%m-%d')}\n\n"
-        f"📈 تعداد ثبت‌ها: {len(rows)}\n"
-        f"📆 تعداد روزهای ثبت‌شده: {days_registered} از ۷ روز\n"
-        f"⏰ میانگین ساعت بیداری: {avg_hour:02d}:{avg_minute:02d}\n\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"{report_text}\n"
-        f"━━━━━━━━━━━━━━\n\n"
-        f"🎯 هدف کاریزما: نظم بیشتر، پیشرفت بیشتر!"
+    await update.effective_chat.send_message(
+        text=(
+            f"📅 گزارش هفتگی بیداری\n\n"
+            f"از {start_date.strftime('%Y-%m-%d')} "
+            f"تا {today.strftime('%Y-%m-%d')}\n\n"
+            f"📈 تعداد ثبت‌ها: {len(rows)}\n"
+            f"📆 تعداد روزهای ثبت‌شده: "
+            f"{days_registered} از ۷ روز\n"
+            f"⏰ میانگین ساعت بیداری: "
+            f"{avg_hour:02d}:{avg_minute:02d}\n\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"{report_text}\n"
+            f"━━━━━━━━━━━━━━\n\n"
+            f"🎯 هدف کاریزما: نظم بیشتر، پیشرفت بیشتر!"
+        )
     )
 
 
@@ -261,7 +314,10 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Message Handler
 # =========================================================
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not update.message or not update.message.text:
         return
@@ -269,17 +325,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "🌅 بیدار شدم":
-        await wakeup(update, context)
+
+        await wakeup(
+            update,
+            context
+        )
 
     elif text == "📊 گزارش من":
-        await personal_report(update, context)
+
+        await personal_report(
+            update,
+            context
+        )
 
     elif text == "📅 گزارش هفتگی":
-        await weekly_report(update, context)
+
+        await weekly_report(
+            update,
+            context
+        )
 
     else:
-        await update.message.reply_text(
-            "لطفاً یکی از گزینه‌های منو را انتخاب کن 👇"
+
+        await update.effective_chat.send_message(
+            text="لطفاً یکی از گزینه‌های منو را انتخاب کن 👇"
         )
 
 
@@ -290,11 +359,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
+
         self.send_header(
             "Content-type",
             "text/plain"
         )
+
         self.end_headers()
 
         self.wfile.write(
@@ -382,6 +454,10 @@ def main():
 
     application.run_polling()
 
+
+# =========================================================
+# Run
+# =========================================================
 
 if __name__ == "__main__":
     main()
